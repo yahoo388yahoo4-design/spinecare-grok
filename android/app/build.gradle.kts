@@ -14,19 +14,25 @@ android {
         versionCode = 1
         versionName = "0.1.0"
     }
+    signingConfigs {
+        create("ci") {
+            val ks = System.getenv("SPINECARE_KEYSTORE")
+            if (!ks.isNullOrBlank()) {
+                storeFile = file(ks)
+                storePassword = System.getenv("SPINECARE_KEYSTORE_PASSWORD")
+                keyAlias = System.getenv("SPINECARE_KEY_ALIAS")
+                keyPassword = System.getenv("SPINECARE_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         debug { isMinifyEnabled = false }
         release {
             // Prototype release: R8 kept off so MediaPipe/OkHttp reflection stays safe.
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            signingConfig = if (System.getenv("SPINECARE_KEYSTORE") != null) {
-                signingConfigs.create("ci") {
-                    storeFile = file(System.getenv("SPINECARE_KEYSTORE"))
-                    storePassword = System.getenv("SPINECARE_KEYSTORE_PASSWORD")
-                    keyAlias = System.getenv("SPINECARE_KEY_ALIAS")
-                    keyPassword = System.getenv("SPINECARE_KEY_PASSWORD")
-                }
+            signingConfig = if (!System.getenv("SPINECARE_KEYSTORE").isNullOrBlank()) {
+                signingConfigs.getByName("ci")
             } else {
                 signingConfigs.getByName("debug")
             }
