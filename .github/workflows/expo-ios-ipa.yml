@@ -1,0 +1,68 @@
+name: Expo iOS unsigned build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'expo/**'
+      - '.github/workflows/expo-ios-ipa.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spinecare-expo-ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    name: Build unsigned Expo iOS app bundle
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: expo
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Download MediaPipe model
+        run: |
+          mkdir -p assets/models
+          curl --fail --location --retry 3 --output assets/models/pose_landmarker_lite.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task
+          test -s assets/models/pose_landmarker_lite.task
+      - name: Generate iOS native project
+        run: npx expo prebuild --platform ios --no-install
+      - name: Install CocoaPods dependencies
+        working-directory: expo/ios
+        run: pod install --repo-update
+      - name: Archive unsigned app for local signing
+        run: |
+          set -o pipefail
+          xcodebuild -workspace ios/SpineCare.xcworkspace -scheme SpineCare -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' -archivePath "$PWD/build/SpineCare-unsigned.xcarchive" CODE_SIGNING_ALLOWED=NO archive | tee xcodebuild-archive.log
+      - name: Package unsigned IPA and archive for local signing
+        run: |
+          mkdir -p build/ipa/Payload
+          ditto build/SpineCare-unsigned.xcarchive/Products/Applications/SpineCare.app build/ipa/Payload/SpineCare.app
+          (cd build/ipa && zip -qry ../SpineCare-unsigned.ipa Payload)
+          ditto -c -k --sequesterRsrc --keepParent build/SpineCare-unsigned.xcarchive build/SpineCare-unsigned.xcarchive.zip
+      - name: Upload unsigned archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: spinecare-expo-ios-unsigned
+          path: |
+            expo/build/SpineCare-unsigned.ipa
+            expo/build/SpineCare-unsigned.xcarchive.zip
+            expo/xcodebuild-archive.log
+          if-no-files-found: error
+          retention-days: 30

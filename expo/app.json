@@ -1,0 +1,51 @@
+{
+  "expo": {
+    "name": "SpineCare",
+    "slug": "spinecare-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Camera is used for on-device pose landmarks during exercise setup. Frames are processed locally; only pose landmarks may be shared if you explicitly enable remote enhancement.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
+      }
+    },
+    "android": {
+      "permissions": [
+        "CAMERA",
+        "INTERNET",
+        "ACCESS_NETWORK_STATE"
+      ],
+      "package": "com.spinecare.mobile",
+      "versionCode": 1,
+      "usesCleartextTraffic": true
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow SpineCare to show a live camera preview for exercise setup. This prototype does not upload or save camera video."
+        }
+      ],
+      [
+        "expo-secure-store",
+        {}
+      ],
+      [
+        "react-native-mediapipe-posedetection",
+        {
+          "assetsPaths": [
+            "./assets/models/"
+          ]
+        }
+      ],
+      "react-native-vision-camera",
+      "./plugins/withMediapipePodfile"
+    ]
+  }
+}

@@ -82,3 +82,15 @@ pio run -t upload
 ```
 
 CI on `main` builds the debug APK, runs the Android unit tests and the GPU-server pose tests, and produces an unsigned iOS IPA.
+
+## Expo app
+
+The React Native / Expo client lives in `expo/`. It is separate from the Kotlin project in `android/` and the Swift project in `ios/`. Prebuild output stays inside `expo/` so those native trees are not overwritten.
+
+```bash
+cd expo
+npm install
+npx expo start
+```
+
+Camera inference needs a native build (`npx expo prebuild`), not Expo Go. Workflows `Expo Android APK` and `Expo iOS unsigned build` produce a release APK and an unsigned iOS bundle. A device IPA still needs your Apple signing.

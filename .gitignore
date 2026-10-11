@@ -11,3 +11,11 @@ ios/**/*.ipa
 .idea/
 .DS_Store
 *.keystore
+expo/node_modules/
+expo/.expo/
+expo/android/
+expo/ios/
+expo/dist/
+expo/web-build/
+expo/build/
+expo/assets/models/*.task

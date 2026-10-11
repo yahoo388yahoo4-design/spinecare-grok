@@ -1,0 +1,114 @@
+name: Expo Android APK
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'expo/**'
+      - '.github/workflows/expo-android-apk.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: spinecare-expo-android-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: expo
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Download bundled MediaPipe pose model for offline inference
+        run: |
+          mkdir -p assets/models
+          curl --fail --location --retry 3 --output assets/models/pose_landmarker_lite.task https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task
+          test -s assets/models/pose_landmarker_lite.task
+      - name: Generate native Android project
+        run: npx expo prebuild --platform android --no-install
+      - name: Build release APK
+        working-directory: expo/android
+        run: ./gradlew assembleRelease --no-daemon
+      - name: Capture emulator smoke-test screenshots and screen recording
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            cd expo
+            mkdir -p evidence
+            adb install android/app/build/outputs/apk/release/app-release.apk
+            adb shell monkey -p com.spinecare.mobile 1
+            sleep 15
+            adb shell wm size 1080x1920
+            adb shell screencap -p /sdcard/spinecare-home.png
+            adb pull /sdcard/spinecare-home.png evidence/01-home.png
+            adb shell input tap 270 110
+            sleep 2
+            adb shell screencap -p /sdcard/spinecare-plan.png
+            adb pull /sdcard/spinecare-plan.png evidence/02-plan.png
+            adb shell input tap 450 110
+            sleep 2
+            adb shell screencap -p /sdcard/spinecare-session.png
+            adb pull /sdcard/spinecare-session.png evidence/03-session.png
+            adb shell input tap 630 110
+            sleep 2
+            adb shell screencap -p /sdcard/spinecare-camera.png
+            adb pull /sdcard/spinecare-camera.png evidence/04-camera.png
+            adb shell input tap 810 110
+            sleep 2
+            adb shell screencap -p /sdcard/spinecare-progress.png
+            adb pull /sdcard/spinecare-progress.png evidence/05-progress.png
+            adb shell input tap 990 110
+            sleep 2
+            adb shell screencap -p /sdcard/spinecare-settings.png
+            adb pull /sdcard/spinecare-settings.png evidence/06-settings.png
+            (adb shell screenrecord --time-limit 30 /sdcard/spinecare-smoke.mp4 >/dev/null 2>&1 &)
+            sleep 2
+            adb shell input tap 90 110
+            sleep 2
+            adb shell input tap 270 110
+            sleep 2
+            adb shell input tap 450 110
+            sleep 2
+            adb shell input tap 630 110
+            sleep 2
+            adb shell input tap 810 110
+            sleep 2
+            adb shell input tap 990 110
+            sleep 8
+            adb pull /sdcard/spinecare-smoke.mp4 evidence/spinecare-smoke.mp4
+      - name: Upload UI test evidence
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: spinecare-expo-ui-smoke-evidence
+          path: expo/evidence/
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: spinecare-expo-android-apk
+          path: expo/android/app/build/outputs/apk/release/*.apk
+          if-no-files-found: error
+          retention-days: 30
