@@ -8,11 +8,11 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "com.spinecare.app"
+        applicationId = "com.spinecare.grok"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.2.0"
     }
     signingConfigs {
         create("ci") {
@@ -42,6 +42,10 @@ android {
     kotlinOptions { jvmTarget = "17" }
     buildFeatures { viewBinding = true }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+}
+
+base {
+    archivesName.set("spinecare-grok")
 }
 
 dependencies {

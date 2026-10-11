@@ -57,7 +57,7 @@ jobs:
             cd expo
             mkdir -p evidence
             adb install android/app/build/outputs/apk/release/app-release.apk
-            adb shell monkey -p com.spinecare.mobile 1
+            adb shell monkey -p com.spinecare.grok 1
             sleep 15
             adb shell wm size 1080x1920
             adb shell screencap -p /sdcard/spinecare-home.png

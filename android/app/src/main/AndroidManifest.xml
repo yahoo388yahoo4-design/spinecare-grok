@@ -24,7 +24,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="SpineCare"
+        android:label="@string/app_name"
         android:supportsRtl="true"
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.SpineCare">

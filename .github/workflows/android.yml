@@ -27,8 +27,8 @@ jobs:
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: spinecare-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: spinecare-grok-debug-apk
+          path: android/app/build/outputs/apk/debug/spinecare-grok-debug.apk
 
   server-tests:
     runs-on: ubuntu-latest

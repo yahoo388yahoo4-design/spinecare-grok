@@ -1,12 +1,13 @@
 {
   "expo": {
-    "name": "SpineCare",
-    "slug": "spinecare-mobile",
-    "version": "0.1.0",
+    "name": "SpineCare Grok",
+    "slug": "spinecare-grok",
+    "version": "0.2.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
+      "bundleIdentifier": "com.spinecare.grok",
       "supportsTablet": true,
       "infoPlist": {
         "NSCameraUsageDescription": "Camera is used for on-device pose landmarks during exercise setup. Frames are processed locally; only pose landmarks may be shared if you explicitly enable remote enhancement.",
@@ -21,8 +22,8 @@
         "INTERNET",
         "ACCESS_NETWORK_STATE"
       ],
-      "package": "com.spinecare.mobile",
-      "versionCode": 1,
+      "package": "com.spinecare.grok",
+      "versionCode": 3,
       "usesCleartextTraffic": true
     },
     "plugins": [

@@ -39,24 +39,34 @@ jobs:
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          name: SpineCare 0.1.0
+          name: SpineCare Grok 0.2.0
           prerelease: true
           body: |
             Prototype build. Not a medical device. It does not see discs, nerves, or bone. Use only a plan your clinician approved. Stop and seek urgent care for new weakness, clumsy hands, trouble walking or balancing, or a change in bowel or bladder control.
 
+            This build is SpineCare Grok. It installs beside the Hermes and Claude apps instead of replacing them.
+
+            | App | Android package / iOS bundle id |
+            | --- | --- |
+            | SpineCare Grok (this release) | `com.spinecare.grok` |
+            | Hermes and Claude | `com.spinecare.app` |
+            | Older Expo build | `com.spinecare.mobile` |
+
+            The home-screen name is **SpineCare Grok**.
+
             ## Files
 
-            - `app-release.apk` — Android app, signed with a throwaway CI key so a phone can install it. Package `com.spinecare.app`. Android 8 or newer.
-            - `app-debug.apk` — the same Android app, debug-signed.
-            - `SpineCare-unsigned.ipa` — iOS app with **no Apple signature**. An iPhone will refuse it until you sign it with your own Apple Developer account.
+            - `spinecare-grok-release.apk` — Android app, signed with a throwaway CI key. Android 8 or newer.
+            - `spinecare-grok-debug.apk` — the same Android app, debug-signed.
+            - `spinecare-grok-unsigned.ipa` — iOS app with **no Apple signature**. An iPhone will refuse it until you sign it with your own Apple Developer account.
 
-            The English/Romanian Expo app is not in this release. Its source is in `expo/`.
+            The English/Romanian Expo app is not in this release. Its source is in `expo/` and now uses the same id, `com.spinecare.grok`.
 
             ## Install the Android app
 
-            1. Download `app-release.apk` on the phone, or copy it over USB.
+            1. Download `spinecare-grok-release.apk` on the phone, or copy it over USB.
             2. Open the file. If Android blocks it, allow installs from that app (Chrome or Files).
-            3. Open SpineCare. The first camera session will ask for the camera permission.
+            3. Open **SpineCare Grok**. The first camera session will ask for the camera permission.
 
             Tabs: Home, Exercises, Sessions, Sensors, Sleep, Settings.
 
@@ -74,18 +84,14 @@ jobs:
             This IPA is unsigned, so tap-to-install will fail.
 
             1. You need a Mac and an Apple Developer account. A free account can sideload through Xcode for about 7 days. A paid account is required for a normal distribution profile.
-            2. Unzip `SpineCare-unsigned.ipa` (it contains `Payload/SpineCare.app`).
+            2. Unzip `spinecare-grok-unsigned.ipa` (it contains `Payload/SpineCare.app`).
             3. Re-sign the app with your certificate, for example `codesign -f -s "Apple Development: Your Name" Payload/SpineCare.app`, zip `Payload` back into an `.ipa`, and install with Xcode (Window, Devices and Simulators) or Apple Configurator.
             4. Trust the developer certificate in Settings, General, VPN & Device Management if iOS asks.
 
-            Tabs: Home, Exercises, Sessions, Sensors, Settings. Same rule as Android: clinician-approved movements only. The camera stays on the phone unless you turn the GPU server on.
-
-            ## Expo app
-
-            Separate app, package `com.spinecare.mobile`, English and Romanian. Build it from `expo/` or download the artifact from the Expo Android APK and Expo iOS unsigned build workflows. It is not attached to this release.
+            The icon says SpineCare Grok. Bundle id is `com.spinecare.grok`, so it can sit next to a Hermes or Claude install. Tabs: Home, Exercises, Sessions, Sensors, Settings. Clinician-approved movements only. The camera stays on the phone unless you turn the GPU server on.
           files: |
-            android/app/build/outputs/apk/release/app-release.apk
-            android/app/build/outputs/apk/debug/app-debug.apk
+            android/app/build/outputs/apk/release/spinecare-grok-release.apk
+            android/app/build/outputs/apk/debug/spinecare-grok-debug.apk
 
   ios-release:
     runs-on: macos-15
@@ -107,10 +113,10 @@ jobs:
         run: |
           mkdir -p Payload
           cp -r build/Build/Products/Release-iphoneos/SpineCare.app Payload/
-          zip -qr SpineCare-unsigned.ipa Payload
+          zip -qr spinecare-grok-unsigned.ipa Payload
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          name: SpineCare 0.1.0
+          name: SpineCare Grok 0.2.0
           prerelease: true
-          files: ios/SpineCare-unsigned.ipa
+          files: ios/spinecare-grok-unsigned.ipa
