@@ -19,9 +19,6 @@ jobs:
       - uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: "8.7"
-      - uses: android-actions/setup-android@v3
-      - name: Install Android SDK 34
-        run: sdkmanager --install "platforms;android-34" "build-tools;34.0.0"
       - name: Generate test keystore (ephemeral, prototype signing)
         run: |
           keytool -genkeypair -v -keystore spinecare-test.keystore \
