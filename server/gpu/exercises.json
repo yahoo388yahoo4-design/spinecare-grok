@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "patient_context": "C2-C7 disc protrusions, right C5/C7 radiculopathy, mild cervico-dorsal scoliosis, C6 lesion under imaging follow-up. ALL plans require clinician sign-off.",
+  "exercises": [
+    {
+      "id": "chin_tuck",
+      "name": "Chin tuck (deep neck flexor)",
+      "view": "side",
+      "required_landmarks": ["lear", "lsho", "lhip"],
+      "min_conf": 0.5,
+      "signal": "head_forward_proxy",
+      "rep_band": {"low": 0.02, "high": 0.12},
+      "target_reps": 10,
+      "tempo_s": {"in": 2, "hold": 3, "out": 2},
+      "form_rules": [
+        {"metric": "shoulder_line_tilt", "max_abs": 8, "cue": "Relax the raised shoulder; keep shoulders level."},
+        {"metric": "trunk_tilt_frontal", "max_abs": 10, "cue": "Keep the trunk upright; only the head moves."}
+      ],
+      "stop_conditions": ["arm pain increase", "tingling worsens", "dizziness"],
+      "clinician_approved": false
+    },
+    {
+      "id": "cervical_rotation_rom",
+      "name": "Cervical rotation ROM (pain-free range)",
+      "view": "front",
+      "required_landmarks": ["nose", "lsho", "rsho"],
+      "min_conf": 0.5,
+      "signal": "abs:neck_yaw_est",
+      "rep_band": {"low": 8, "high": 35},
+      "target_reps": 8,
+      "tempo_s": {"in": 3, "hold": 2, "out": 3},
+      "form_rules": [
+        {"metric": "shoulder_line_tilt", "max_abs": 8, "cue": "Do not lift the shoulder when turning; rotate through the neck only."},
+        {"metric": "trunk_tilt_frontal", "max_abs": 8, "cue": "Keep the chest facing forward; isolate neck rotation."}
+      ],
+      "stop_conditions": ["radiating arm pain", "numbness increases"],
+      "clinician_approved": false
+    },
+    {
+      "id": "thoracic_extension",
+      "name": "Thoracic extension (seated)",
+      "view": "side",
+      "required_landmarks": ["lear", "lsho", "lhip", "lkne"],
+      "min_conf": 0.5,
+      "signal": "trunk_tilt_sagittal_proxy",
+      "rep_band": {"low": 5, "high": 18},
+      "target_reps": 10,
+      "tempo_s": {"in": 3, "hold": 3, "out": 3},
+      "form_rules": [
+        {"metric": "cervical_sag_proxy", "max_abs": 60, "cue": "Lead with the chest, not the head; keep the neck long."}
+      ],
+      "stop_conditions": ["sharp neck pain", "arm symptoms"],
+      "clinician_approved": false
+    },
+    {
+      "id": "scapular_retraction",
+      "name": "Scapular retraction / setting",
+      "view": "back",
+      "required_landmarks": ["lsho", "rsho", "lhip", "rhip"],
+      "min_conf": 0.5,
+      "signal": "shoulder_line_tilt",
+      "rep_band": {"low": 0, "high": 6},
+      "target_reps": 10,
+      "tempo_s": {"in": 3, "hold": 5, "out": 3},
+      "form_rules": [
+        {"metric": "trunk_tilt_frontal", "max_abs": 8, "cue": "Stay tall; do not lean."}
+      ],
+      "stop_conditions": ["pain between shoulder blades worsening"],
+      "clinician_approved": false
+    }
+  ]
+}

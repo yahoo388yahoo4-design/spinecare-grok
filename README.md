@@ -20,3 +20,65 @@ This is a prototype. It does not diagnose, does not image the spine, and does no
 Today, Plan, Coach, Progress, Sleep, Sensors, Settings. English and Romanian. Plans, doses, sessions, check-ins, and sleep notes stay on this device.
 
 Nothing here is a prescription. The four reference movements start unapproved until you confirm your clinician allowed that dose.
+
+## Native clients, server, and firmware
+
+These trees are the phone, server, and wearable code from the Hermes and SpineCare repositories. The web app in this workspace is separate; it does not replace these projects.
+
+| Path | What it is |
+| --- | --- |
+| `android/` | Kotlin app. CameraX, on-device MediaPipe, rep engine, BLE posture client, Health Connect, CSV export. |
+| `ios/` | Swift app. Vision pose, the same coaching engines, session store, unsigned IPA via XcodeGen. |
+| `firmware/esp32_posture_node/` | ESP32-S3 BLE posture node (BMI270). |
+| `server/gpu/` | Optional FastAPI + WebSocket coaching server (YOLOv8-pose). Processes frames in memory. |
+| `server/landmarks/` | Optional landmark-only API. Authenticated `/health` and `/analyze/pose`. No camera frames. Not a clinical assessment. |
+
+### Android
+
+Needs JDK 17, Android SDK 34, Gradle 8.7.
+
+```bash
+cd android
+gradle assembleDebug
+gradle testDebugUnitTest
+```
+
+The pose model is already in `android/app/src/main/assets/pose_landmarker_full.task`.
+
+### iOS
+
+```bash
+cd ios
+brew install xcodegen   # once
+xcodegen generate
+xcodebuild -project SpineCare.xcodeproj -scheme SpineCare -sdk iphoneos -configuration Release CODE_SIGNING_ALLOWED=NO build
+```
+
+A device IPA still needs your own Apple signing. Do not commit certificates or profiles.
+
+### GPU server
+
+```bash
+cd server/gpu
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8300
+```
+
+### Landmark server
+
+```bash
+cd server/landmarks
+pip install -r requirements.txt
+export SPINECARE_SERVER_USER='choose-a-user'
+export SPINECARE_SERVER_PASSWORD='use-a-long-random-password'
+uvicorn app:app --host 0.0.0.0 --port 8000
+```
+
+### Firmware
+
+```bash
+cd firmware/esp32_posture_node
+pio run -t upload
+```
+
+CI on `main` builds the debug APK, runs the Android unit tests and the GPU-server pose tests, and produces an unsigned iOS IPA.
