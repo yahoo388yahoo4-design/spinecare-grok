@@ -189,12 +189,12 @@ class ExerciseActivity : AppCompatActivity() {
                     lastServerSend = now
                     server?.sendFrame(bmp, now, null)
                 }
-                // Record the composited frame (camera + overlay burned in)
-                recorder?.let { r ->
-                    r.drawFrame(bmp, lms, lastFramingMissing, lastFramingReady,
-                        lastMetricsLine, lastCue, "${repEngine.reps}/${exercise.targetReps}", frontCamera)
-                    recordedFrames++
-                }
+            }
+            // Always burn the camera frame, even before a pose is found.
+            recorder?.let { r ->
+                r.drawFrame(bmp, lms, lastFramingMissing, lastFramingReady,
+                    lastMetricsLine, lastCue, "${repEngine.reps}/${exercise.targetReps}", frontCamera)
+                recordedFrames++
             }
         } catch (e: Exception) {
             // keep the loop alive on transient frame errors
@@ -312,7 +312,12 @@ class ExerciseActivity : AppCompatActivity() {
         recorder = null
         var videoPath: String? = null
         if (rec != null) {
-            try { rec.stop(); if (recordedFrames > 0) videoPath = recordFile?.absolutePath }
+            try {
+                rec.stop()
+                val file = recordFile
+                if (recordedFrames > 0 && rec.samplesWritten > 0 && file != null && file.length() > 1000)
+                    videoPath = file.absolutePath
+            }
             catch (e: Exception) { videoPath = null }
         }
         if (serverMode && server?.connected == true) {

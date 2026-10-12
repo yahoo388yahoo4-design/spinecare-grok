@@ -315,10 +315,6 @@ struct CameraPreview: UIViewRepresentable {
         private var appliedLens: String?
         private var frameDelegate: FrameDelegate?
         private var started = false
-        private var rotationCoordinator: Any?
-        private var rotationObservation: NSKeyValueObservation?
-        private var previewAngle: CGFloat = 90
-        private var captureAngle: CGFloat = 90
 
         init(tracker: PoseTracker, onFrame: @escaping (CMSampleBuffer) -> Void, onLenses: @escaping ([String]) -> Void) {
             self.tracker = tracker
@@ -379,101 +375,48 @@ struct CameraPreview: UIViewRepresentable {
             session.commitConfiguration()
             if !session.isRunning { session.startRunning() }
             started = true
-            let device = newInput.device
-            DispatchQueue.main.async { [weak self] in
-                self?.installRotation(device: device)
-            }
+            DispatchQueue.main.async { [weak self] in self?.applyConnection() }
         }
 
-        /// Keeps the face upright: portrait phone shows a vertical face, and so does landscape.
-        private func installRotation(device: AVCaptureDevice) {
-            if #available(iOS 17.0, *) {
-                guard let layer = host?.previewLayer else { return }
-                let coordinator = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: layer)
-                rotationCoordinator = coordinator
-                rotationObservation = coordinator.observe(
-                    \.videoRotationAngleForHorizonLevelPreview,
-                    options: [.initial, .new]
-                ) { [weak self] coordinator, _ in
-                    let preview = coordinator.videoRotationAngleForHorizonLevelPreview
-                    let capture = coordinator.videoRotationAngleForHorizonLevelCapture
-                    DispatchQueue.main.async {
-                        self?.applyAngles(preview: preview, capture: capture)
+        /// Portrait screen → upright face. Landscape screen → upright face.
+        /// The angle comes from the view itself, not from a second horizon rotation.
+        func applyConnection() {
+            guard let host else { return }
+            let front = appliedFront ?? false
+            CameraOrientation.bufferUpright = false
+            let portrait = host.bounds.height + 1 >= host.bounds.width
+            let angle = Self.previewAngle(portrait: portrait)
+            if let conn = host.previewLayer.connection {
+                if conn.isVideoMirroringSupported {
+                    if front {
+                        conn.automaticallyAdjustsVideoMirroring = true
+                    } else {
+                        conn.automaticallyAdjustsVideoMirroring = false
+                        conn.isVideoMirrored = false
                     }
                 }
-            } else {
-                applyLegacyAngles()
+                if #available(iOS 17.0, *) {
+                    if conn.isVideoRotationAngleSupported(angle) { conn.videoRotationAngle = angle }
+                } else if conn.isVideoOrientationSupported {
+                    conn.videoOrientation = Self.videoOrientation(for: angle)
+                }
+            }
+            frameDelegate?.orientation = CameraOrientation.current(front: front)
+        }
+
+        private static func previewAngle(portrait: Bool) -> CGFloat {
+            if portrait { return 90 }
+            switch UIDevice.current.orientation {
+            case .landscapeRight: return 180
+            default: return 0
             }
         }
 
-        func applyConnection() {
-            if #available(iOS 17.0, *) {
-                if rotationCoordinator == nil, let device = input?.device {
-                    installRotation(device: device)
-                    return
-                }
-                applyAngles(preview: previewAngle, capture: captureAngle)
-            } else {
-                applyLegacyAngles()
-            }
-        }
-
-        @available(iOS 17.0, *)
-        private func applyAngles(preview: CGFloat, capture: CGFloat) {
-            previewAngle = preview
-            captureAngle = capture
-            let front = appliedFront ?? false
-            if let conn = host?.previewLayer.connection {
-                if conn.isVideoRotationAngleSupported(preview) {
-                    conn.videoRotationAngle = preview
-                }
-                if conn.isVideoMirroringSupported {
-                    conn.automaticallyAdjustsVideoMirroring = false
-                    conn.isVideoMirrored = front
-                }
-            }
-            queue.async { [weak self] in
-                self?.rotateCaptureConnection(angle: capture, front: front)
-            }
-        }
-
-        private func applyLegacyAngles() {
-            let front = appliedFront ?? false
-            let orientation = CameraOrientation.captureOrientation()
-            if let conn = host?.previewLayer.connection, conn.isVideoOrientationSupported {
-                conn.videoOrientation = orientation
-                if conn.isVideoMirroringSupported {
-                    conn.automaticallyAdjustsVideoMirroring = false
-                    conn.isVideoMirrored = front
-                }
-            }
-            queue.async { [weak self] in
-                guard let self,
-                      let output = self.session.outputs.compactMap({ $0 as? AVCaptureVideoDataOutput }).first,
-                      let conn = output.connection(with: .video),
-                      conn.isVideoOrientationSupported else { return }
-                conn.videoOrientation = orientation
-                DispatchQueue.main.async {
-                    CameraOrientation.bufferUpright = true
-                    self.frameDelegate?.orientation = .up
-                }
-            }
-        }
-
-        private func rotateCaptureConnection(angle: CGFloat, front: Bool) {
-            guard let output = session.outputs.compactMap({ $0 as? AVCaptureVideoDataOutput }).first,
-                  let conn = output.connection(with: .video) else { return }
-            var upright = false
-            if #available(iOS 17.0, *), conn.isVideoRotationAngleSupported(angle) {
-                conn.videoRotationAngle = angle
-                upright = true
-            } else if conn.isVideoOrientationSupported {
-                conn.videoOrientation = CameraOrientation.captureOrientation()
-                upright = true
-            }
-            DispatchQueue.main.async { [weak self] in
-                CameraOrientation.bufferUpright = upright
-                self?.frameDelegate?.orientation = CameraOrientation.vision(front: front)
+        private static func videoOrientation(for angle: CGFloat) -> AVCaptureVideoOrientation {
+            switch angle {
+            case 180: return .landscapeLeft
+            case 0: return .landscapeRight
+            default: return .portrait
             }
         }
 

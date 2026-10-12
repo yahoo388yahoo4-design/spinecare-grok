@@ -1,15 +1,18 @@
 package com.spinecare.app
 
-import android.content.Intent
-import android.net.Uri
+import android.app.AlertDialog
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.MediaController
 import android.widget.ScrollView
 import android.widget.TextView
+import android.widget.Toast
+import android.widget.VideoView
 import androidx.fragment.app.Fragment
 import java.io.File
 
@@ -50,27 +53,7 @@ class SessionsFragment : Fragment() {
                 val f = File(video)
                 if (f.exists()) {
                     val btn = Button(ctx).apply { text = "▶ Review recording (${srow.optInt("recorded_frames")} frames)" }
-                    btn.setOnClickListener {
-                        val uri = androidx.core.content.FileProvider.getUriForFile(
-                            ctx, "${requireContext().packageName}.fileprovider", f)
-                        val intent = Intent(Intent.ACTION_VIEW).apply {
-                            setDataAndType(uri, "video/mp4")
-                            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        }
-                        try { startActivity(intent) }
-                        catch (e: Exception) {
-                            // Fallback: share sheet so any player can open it
-                            val share = Intent(Intent.ACTION_SEND).apply {
-                                type = "video/mp4"
-                                putExtra(Intent.EXTRA_STREAM, uri)
-                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            try { startActivity(Intent.createChooser(share, "Review session")) }
-                            catch (_: Exception) { }
-                        }
-                    }
+                    btn.setOnClickListener { play(f) }
                     col.addView(btn)
                 } else {
                     col.addView(p("  recording file missing"))
@@ -78,5 +61,28 @@ class SessionsFragment : Fragment() {
             }
         }
         return root
+    }
+
+    /** Plays the saved camera recording inside the app, with the burned-in skeleton. */
+    private fun play(file: File) {
+        val ctx = requireContext()
+        val video = VideoView(ctx)
+        val h = (resources.displayMetrics.heightPixels * 0.62f).toInt()
+        val wrap = FrameLayout(ctx)
+        wrap.addView(video, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, h))
+        val controls = MediaController(ctx)
+        controls.setAnchorView(video)
+        video.setMediaController(controls)
+        video.setVideoPath(file.absolutePath)
+        video.setOnPreparedListener { it.isLooping = false; video.start() }
+        video.setOnErrorListener { _, _, _ ->
+            Toast.makeText(ctx, "Could not play this recording.", Toast.LENGTH_SHORT).show()
+            true
+        }
+        AlertDialog.Builder(ctx)
+            .setTitle("Session review")
+            .setView(wrap)
+            .setPositiveButton("Close") { _, _ -> video.stopPlayback() }
+            .show()
     }
 }
