@@ -39,12 +39,12 @@ jobs:
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          name: SpineCare Grok 0.2.0
+          name: SpineCare Grok 0.2.1
           prerelease: true
           body: |
             Prototype build. Not a medical device. It does not see discs, nerves, or bone. Use only a plan your clinician approved. Stop and seek urgent care for new weakness, clumsy hands, trouble walking or balancing, or a change in bowel or bladder control.
 
-            This build is SpineCare Grok. It installs beside the Hermes and Claude apps instead of replacing them.
+            This build is SpineCare Grok 0.2.1. It installs beside the Hermes and Claude apps instead of replacing them. The home screen opens: the previous build closed immediately because the bottom bar had six items and Material allows five. On iPhone, the exercise camera preview now fills the screen instead of staying black.
 
             | App | Android package / iOS bundle id |
             | --- | --- |
@@ -117,6 +117,6 @@ jobs:
       - name: Upload to release
         uses: softprops/action-gh-release@v2
         with:
-          name: SpineCare Grok 0.2.0
+          name: SpineCare Grok 0.2.1
           prerelease: true
           files: ios/spinecare-grok-unsigned.ipa

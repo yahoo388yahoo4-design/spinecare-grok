@@ -101,9 +101,16 @@ class ExerciseActivity : AppCompatActivity() {
     }
 
     private fun startCamera() {
-        val p = ProcessCameraProvider.getInstance(this).get()
-        provider = p
-        bindCamera(p)
+        val future = ProcessCameraProvider.getInstance(this)
+        future.addListener({
+            try {
+                val p = future.get()
+                provider = p
+                bindCamera(p)
+            } catch (_: Exception) {
+                Toast.makeText(this, "Camera could not start", Toast.LENGTH_LONG).show()
+            }
+        }, ContextCompat.getMainExecutor(this))
     }
 
     private fun bindCamera(p: ProcessCameraProvider) {

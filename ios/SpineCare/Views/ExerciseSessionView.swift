@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import QuartzCore
 
 /// Real-time coaching session: camera -> Vision pose -> metrics/framing/reps,
 /// with optional GPU-server enhancement (AUTO mode falls back on drop).
@@ -192,80 +193,110 @@ struct OverlayCanvas: View {
 }
 
 /// UIViewRepresentable wrapping AVCaptureSession + Vision processing.
-/// Attaches a video preview layer (fixes the black-preview bug), requests
-/// camera permission, and supports front/back switching.
+/// The preview layer is resized whenever the view lays out (a zero-size layer
+/// was the black preview), and the frame delegate is retained.
 struct CameraPreview: UIViewRepresentable {
     let tracker: PoseTracker
     let frontCamera: Bool
     let onFrame: (CMSampleBuffer) -> Void
 
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
+    func makeUIView(context: Context) -> CameraHostView {
+        let view = CameraHostView()
+        view.backgroundColor = .black
+        view.previewLayer.videoGravity = .resizeAspectFill
+        view.previewLayer.session = context.coordinator.session
+        context.coordinator.host = view
         AVCaptureCamera.shared.requestPermission { granted in
-            if granted { DispatchQueue.main.async { context.coordinator.reconfigure() } }
+            if granted { context.coordinator.reconfigure(front: frontCamera) }
         }
-        context.coordinator.attach(to: view)
         return view
     }
 
-    func updateUIView(_ uiView: UIView, context: Context) {
-        context.coordinator.frontCamera = frontCamera
-        context.coordinator.reconfigure()
+    func updateUIView(_ uiView: CameraHostView, context: Context) {
+        context.coordinator.host = uiView
+        context.coordinator.reconfigure(front: frontCamera)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(tracker: tracker, onFrame: onFrame) }
 
-    final class Coordinator: NSObject, AVCaptureVideoDataOutputSampleBufferDelegate {
-        let session = AVCaptureSession()
+    final class CameraHostView: UIView {
         let previewLayer = AVCaptureVideoPreviewLayer()
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            layer.addSublayer(previewLayer)
+        }
+        required init?(coder: NSCoder) { return nil }
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            previewLayer.frame = bounds
+            CATransaction.commit()
+        }
+    }
+
+    final class Coordinator {
+        let session = AVCaptureSession()
         let tracker: PoseTracker
         let onFrame: (CMSampleBuffer) -> Void
-        var frontCamera = false
+        weak var host: CameraHostView?
+        private let queue = DispatchQueue(label: "spinecare.camera")
         private var input: AVCaptureDeviceInput?
-        private var configured = false
+        private var appliedFront: Bool?
+        private var frameDelegate: FrameDelegate?
+        private var started = false
 
         init(tracker: PoseTracker, onFrame: @escaping (CMSampleBuffer) -> Void) {
-            self.tracker = tracker; self.onFrame = onFrame
+            self.tracker = tracker
+            self.onFrame = onFrame
+            session.sessionPreset = .hd1280x720
         }
 
-        func attach(to view: UIView) {
-            previewLayer.session = session
-            previewLayer.videoGravity = .resizeAspectFill
-            previewLayer.frame = view.bounds
-            view.layer.insertSublayer(previewLayer, at: 0)
-            reconfigure()
-        }
-
-        func reconfigure() {
+        func reconfigure(front: Bool) {
             guard AVCaptureCamera.shared.authorized else { return }
-            let position: AVCaptureDevice.Position = frontCamera ? .front : .back
+            if appliedFront == front && started { return }
+            appliedFront = front
+            queue.async { [weak self] in self?.configure(front: front) }
+        }
+
+        private func configure(front: Bool) {
+            let position: AVCaptureDevice.Position = front ? .front : .back
             guard let cam = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
                     ?? AVCaptureDevice.default(for: .video) else { return }
             session.beginConfiguration()
             if let old = input { session.removeInput(old) }
-            guard let newInput = try? AVCaptureDeviceInput(device: cam) else {
-                session.commitConfiguration(); return
+            guard let newInput = try? AVCaptureDeviceInput(device: cam), session.canAddInput(newInput) else {
+                session.commitConfiguration()
+                return
             }
-            if session.canAddInput(newInput) {
-                session.addInput(newInput); input = newInput
-            }
+            session.addInput(newInput)
+            input = newInput
             if session.outputs.isEmpty {
                 let output = AVCaptureVideoDataOutput()
                 output.alwaysDiscardsLateVideoFrames = true
                 output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
                 let interval = max(0.05, Double(ServerConfig.shared.frameIntervalMs) / 1000)
-                output.setSampleBufferDelegate(FrameDelegate(tracker: tracker, minInterval: interval,
-                                                             onFrame: onFrame),
-                                               queue: DispatchQueue(label: "pose.queue"))
+                let delegate = FrameDelegate(tracker: tracker, minInterval: interval, onFrame: onFrame)
+                frameDelegate = delegate
+                output.setSampleBufferDelegate(delegate, queue: DispatchQueue(label: "spinecare.pose"))
                 if session.canAddOutput(output) { session.addOutput(output) }
             }
-            // Mirror the preview for the front camera (WYSIWYG)
-            previewLayer.connection?.automaticallyAdjustsVideoMirroring = false
-            previewLayer.connection?.isVideoMirrored = frontCamera
             session.commitConfiguration()
-            if !configured {
-                configured = true
-                DispatchQueue.global(qos: .userInitiated).async { self.session.startRunning() }
+            if !session.isRunning { session.startRunning() }
+            started = true
+            DispatchQueue.main.async { [weak self] in self?.applyConnection(front: front) }
+        }
+
+        private func applyConnection(front: Bool) {
+            guard let conn = host?.previewLayer.connection else { return }
+            if #available(iOS 17.0, *) {
+                if conn.isVideoRotationAngleSupported(90) { conn.videoRotationAngle = 90 }
+            } else if conn.isVideoOrientationSupported {
+                conn.videoOrientation = .portrait
+            }
+            if conn.isVideoMirroringSupported {
+                conn.automaticallyAdjustsVideoMirroring = false
+                conn.isVideoMirrored = front
             }
         }
     }
