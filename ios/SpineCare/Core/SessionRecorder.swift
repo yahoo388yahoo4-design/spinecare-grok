@@ -13,7 +13,7 @@ final class SessionRecorder {
     private let width: Int
     private let height: Int
     private var started = false
-    private var lastTime = CMTime.zero
+    private var frameIndex: Int64 = 0
     private let ciContext = CIContext(options: nil)
 
     init?(url: URL, width: Int, height: Int) {
@@ -41,53 +41,53 @@ final class SessionRecorder {
     }
 
     func append(_ pixelBuffer: CVPixelBuffer, landmarks: [String: Metrics.LM],
-                cue: String, metrics: String, reps: String, mirror: Bool,
-                timestamp: CMTime) {
-        guard input.isReadyForMoreMediaData else { return }
-        if !started { started = true; writer.startSession(atSourceTime: timestamp) }
-
-        // 1. Camera frame -> upright portrait CIImage (sensor frame is landscape).
-        var ci = CIImage(cvPixelBuffer: pixelBuffer)
-        // Rotate 90° CW so the portrait-held phone scene is upright, then shift
-        // into positive space.
-        ci = ci.transformed(by: CGAffineTransform(rotationAngle: -.pi / 2))
-        ci = ci.transformed(by: CGAffineTransform(translationX: 0, y: ci.extent.height))
-        if mirror {
-            ci = ci.transformed(by: CGAffineTransform(scaleX: -1, y: 1))
-            ci = ci.transformed(by: CGAffineTransform(translationX: ci.extent.width, y: 0))
+                cue: String, metrics: String, reps: String, mirror _: Bool,
+                orientation: CGImagePropertyOrientation, timestamp _: CMTime) -> Bool {
+        guard input.isReadyForMoreMediaData else { return false }
+        let time = CMTime(value: frameIndex, timescale: 30)
+        if !started {
+            started = true
+            writer.startSession(atSourceTime: .zero)
         }
-        // Scale to the output canvas.
-        let sx = CGFloat(width) / ci.extent.width
-        let sy = CGFloat(height) / ci.extent.height
+        frameIndex += 1
+
+        var ci = CIImage(cvPixelBuffer: pixelBuffer).oriented(forExifOrientation: Int32(orientation.rawValue))
+        ci = ci.transformed(by: CGAffineTransform(translationX: -ci.extent.origin.x, y: -ci.extent.origin.y))
+        let sx = CGFloat(width) / max(ci.extent.width, 1)
+        let sy = CGFloat(height) / max(ci.extent.height, 1)
         ci = ci.transformed(by: CGAffineTransform(scaleX: sx, y: sy))
 
-        // 2. Overlay via UIGraphicsImageRenderer (y-down context, thread-safe).
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1
-        let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height),
-                                               format: format)
+        let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format)
         let overlayImage = renderer.image { r in
             OverlayRenderer.draw(cg: r.cgContext, size: CGSize(width: width, height: height),
-                                 lms: landmarks, cue: cue, metrics: metrics, reps: reps,
-                                 mirror: mirror) // landmarks are from the raw frame; flip with the camera
+                                 lms: landmarks, cue: cue, metrics: metrics, reps: reps, mirror: false)
         }
-        guard let overlayCG = overlayImage.cgImage else { return }
-        let overlayCI = CIImage(cgImage: overlayCG)
-        let composed = overlayCI.composited(over: ci)
+        guard let overlayCG = overlayImage.cgImage else { return false }
+        let composed = CIImage(cgImage: overlayCG).composited(over: ci)
 
-        // 3. Write into the adaptor's buffer pool.
         var out: CVPixelBuffer?
-        guard let pool = adaptor.pixelBufferPool else { return }
-        let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &out)
-        guard status == kCVReturnSuccess, let ob = out else { return }
+        guard let pool = adaptor.pixelBufferPool else { return false }
+        guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &out) == kCVReturnSuccess, let ob = out else { return false }
         ciContext.render(composed, to: ob)
-        adaptor.append(ob, withPresentationTime: timestamp)
-        lastTime = timestamp
+        guard adaptor.append(ob, withPresentationTime: time) else { return false }
+        return true
     }
 
-    func finish() {
-        guard started else { writer.cancelWriting(); return }
+    /// Completes the MP4. Without this the file has no movie header and review cannot open it.
+    func finish(_ done: @escaping (Bool) -> Void) {
+        guard started else {
+            writer.cancelWriting()
+            try? FileManager.default.removeItem(at: writer.outputURL)
+            DispatchQueue.main.async { done(false) }
+            return
+        }
         input.markAsFinished()
-        writer.endSession(atSourceTime: lastTime)
+        writer.finishWriting {
+            let ok = self.writer.status == .completed
+            if !ok { try? FileManager.default.removeItem(at: self.writer.outputURL) }
+            DispatchQueue.main.async { done(ok) }
+        }
     }
 }

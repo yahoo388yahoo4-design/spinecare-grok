@@ -1,8 +1,48 @@
 import SwiftUI
 import AVKit
+import UIKit
+
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    static var orientationLock: UIInterfaceOrientationMask = .allButUpsideDown
+
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        AppDelegate.orientationLock
+    }
+}
+
+/// Portrait or landscape, from the button or by turning the phone.
+final class OrientationController: ObservableObject {
+    static let shared = OrientationController()
+    @Published var landscape = false
+
+    private init() {
+        UIDevice.current.beginGeneratingDeviceOrientationNotifications()
+        NotificationCenter.default.addObserver(
+            forName: UIDevice.orientationDidChangeNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.landscape = CameraOrientation.interfaceOrientation().isLandscape
+        }
+    }
+
+    func rotate() {
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let toLandscape = !(scene?.interfaceOrientation.isLandscape ?? landscape)
+        landscape = toLandscape
+        let mask: UIInterfaceOrientationMask = toLandscape ? .landscapeRight : .portrait
+        AppDelegate.orientationLock = mask
+        scene?.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { _ in }
+        scene?.windows.first?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            AppDelegate.orientationLock = .allButUpsideDown
+            scene?.windows.first?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        }
+    }
+}
 
 @main
 struct SpineCareApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+
     var body: some Scene {
         WindowGroup {
             RootView()
@@ -56,32 +96,36 @@ struct SessionsView: View {
                     VStack(spacing: 12) {
                         Image(systemName: "film").font(.largeTitle).foregroundStyle(.secondary)
                         Text("No sessions yet").font(.headline)
-                        Text("Run an exercise from the Exercises tab. With recording on, each session is saved with the skeleton, angles and cues burned into the video.")
+                        Text("Start an exercise, then press Stop & Save. The session is kept on this iPhone, with the recording when Record is on.")
                             .font(.callout).foregroundStyle(.secondary)
                             .multilineTextAlignment(.center).padding()
                     }
                 } else {
                     List(store.sessions) { rec in
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("\(rec.date) · \(Plan.byId(rec.exercise)?.name ?? rec.exercise)")
-                                .font(.headline)
-                            Text("reps=\(rec.reps) · frames=\(rec.frames) · [\(rec.source)]")
-                                .font(.caption).foregroundStyle(.secondary)
-                            if !rec.avg.isEmpty {
-                                Text(rec.avg.map { "\($0.key)=\(String(format: "%.1f", $0.value))" }
-                                        .joined(separator: "  "))
-                                    .font(.system(.caption2, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                            }
-                            if let v = rec.video, store.videoExists(rec) {
-                                NavigationLink("▶ Review recording (\(rec.recordedFrames ?? 0) frames)") {
-                                    VideoReviewView(url: URL(fileURLWithPath: v))
+                        NavigationLink {
+                            SessionDetailView(rec: rec)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("\(rec.date) · \(Plan.byId(rec.exercise)?.name ?? rec.exercise)")
+                                    .font(.headline)
+                                Text("reps=\(rec.reps) · frames=\(rec.frames) · [\(rec.source)]")
+                                    .font(.caption).foregroundStyle(.secondary)
+                                if !rec.avg.isEmpty {
+                                    Text(rec.avg.map { "\($0.key)=\(String(format: "%.1f", $0.value))" }
+                                            .joined(separator: "  "))
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(.secondary)
                                 }
-                            } else if rec.video != nil {
-                                Text("recording file missing").font(.caption).foregroundStyle(.red)
+                                if store.resolvedVideo(rec) != nil {
+                                    Text("Recording · \(rec.recordedFrames ?? 0) frames")
+                                        .font(.caption).foregroundStyle(.green)
+                                } else {
+                                    Text("No recording for this session")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
                             }
+                            .padding(.vertical, 4)
                         }
-                        .padding(.vertical, 4)
                     }
                 }
             }
@@ -91,13 +135,47 @@ struct SessionsView: View {
     }
 }
 
-struct VideoReviewView: View {
-    let url: URL
+struct SessionDetailView: View {
+    let rec: SessionRecord
+    @State private var player: AVPlayer?
+    @State private var missing = false
+
     var body: some View {
-        VideoPlayer(player: AVPlayer(url: url))
-            .ignoresSafeArea()
-            .navigationTitle("Session review")
-            .onDisappear {}
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                if let player {
+                    VideoPlayer(player: player)
+                        .frame(height: 320)
+                        .background(Color.black)
+                } else if missing {
+                    Text("This session was saved, but the video file is not on the phone. Start again with Record on and stay in frame until you press Stop & Save.")
+                        .font(.callout).foregroundStyle(.secondary)
+                }
+                Text(Plan.byId(rec.exercise)?.name ?? rec.exercise).font(.title2)
+                Text("\(rec.date) · reps \(rec.reps) · \(rec.source)")
+                    .font(.callout).foregroundStyle(.secondary)
+                if !rec.avg.isEmpty {
+                    Text(rec.avg.map { "\($0.key) \(String(format: "%.1f", $0.value))" }.joined(separator: "\n"))
+                        .font(.system(.body, design: .monospaced))
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding()
+        }
+        .navigationTitle("Session review")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { open() }
+        .onDisappear { player?.pause() }
+    }
+
+    private func open() {
+        guard player == nil else { return }
+        guard let url = SessionStore.shared.resolvedVideo(rec) else { missing = true; return }
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        guard size > 1000 else { missing = true; return }
+        let next = AVPlayer(url: url)
+        player = next
+        next.play()
     }
 }
 

@@ -1,6 +1,7 @@
 import SwiftUI
 import AVFoundation
 import QuartzCore
+import UIKit
 
 /// Real-time coaching session: camera -> Vision pose -> metrics/framing/reps,
 /// with optional GPU-server enhancement (AUTO mode falls back on drop).
@@ -17,6 +18,11 @@ struct ExerciseSessionView: View {
     @State private var serverConnected = false
     @State private var frontCamera = false
     @State private var recording = ServerConfig.shared.recordSessions
+    @State private var zoom: Double = 1
+    @State private var lens = "wide"
+    @State private var lenses = ["wide"]
+    @State private var saved = false
+    @ObservedObject private var orientation = OrientationController.shared
     private let frameSink = FrameSink()
     @State private var recorder: SessionRecorder?
     @State private var recordedFrames = 0
@@ -25,7 +31,8 @@ struct ExerciseSessionView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            CameraPreview(tracker: tracker, frontCamera: frontCamera) { buf in
+            CameraPreview(tracker: tracker, frontCamera: frontCamera, zoom: zoom, lens: lens,
+                          onLenses: { lenses = $0 }) { buf in
                 frameSink.set(buf)
             }
             .ignoresSafeArea()
@@ -43,6 +50,25 @@ struct ExerciseSessionView: View {
                     .background(.black.opacity(0.7)).foregroundStyle(.yellow)
                 Text(metricsText).font(.system(.caption, design: .monospaced))
                     .padding(6).background(.black.opacity(0.7)).foregroundStyle(.white)
+                HStack {
+                    Slider(value: $zoom, in: 1...5, step: 0.1)
+                    Text(String(format: "%.1fx", zoom))
+                        .font(.caption.monospacedDigit()).foregroundStyle(.white).frame(width: 44)
+                }.padding(.horizontal)
+                HStack {
+                    ForEach(lenses, id: \.self) { item in
+                        Button(lensTitle(item)) {
+                            lens = item
+                            zoom = 1
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(lens == item ? .green : .white)
+                    }
+                    Button(orientation.landscape ? "Portrait" : "Landscape") {
+                        orientation.rotate()
+                    }
+                    .buttonStyle(.bordered)
+                }
                 HStack {
                     Button(running ? "Stop & Save" : "Start") { toggle() }
                         .buttonStyle(.borderedProminent)
@@ -64,8 +90,20 @@ struct ExerciseSessionView: View {
         }
         .navigationTitle(exercise.name)
         .onAppear { cue = "Position the camera: \(exercise.view.uppercased()) view." }
-        .onDisappear { client.disconnect(); stopRecorder() }
+        .onDisappear {
+            client.disconnect()
+            if running { running = false; persist() }
+        }
+        .onChange(of: frontCamera) { _ in zoom = 1 }
         .onChange(of: tracker.landmarks) { lms in score(lms) }
+    }
+
+    private func lensTitle(_ id: String) -> String {
+        switch id {
+        case "ultra": return "Ultra"
+        case "tele": return "Tele"
+        default: return "Wide"
+        }
     }
 
     private func modeLabel() -> String {
@@ -84,6 +122,7 @@ struct ExerciseSessionView: View {
     /// Local scoring: framing gate -> metrics -> rep engine -> form rules.
     private func score(_ lms: [String: Metrics.LM]) {
         guard running else { return }
+        captureFrame()
         let framing = FramingGuide.check(lms.isEmpty ? nil : lms,
                                          required: exercise.requiredLandmarks,
                                          minConf: exercise.minConf, frameW: 1, frameH: 1)
@@ -100,19 +139,22 @@ struct ExerciseSessionView: View {
         }
         metricsText = metrics.map { "\($0.key)=\(String(format: "%.1f", $0.value))" }.joined(separator: "  ")
             + "\npose=\(String(format: "%.0f", tracker.lastMs))ms \(serverConnected ? "GPU" : "on-device")"
-        // Burn the current frame + overlay into the recording
-        if let rec = recorder, let buf = frameSink.get(),
-           let pb = CMSampleBufferGetImageBuffer(buf) {
-            rec.append(pb, landmarks: tracker.landmarks, cue: cue, metrics: metricsText,
-                      reps: "\(reps)/\(exercise.targetReps)", mirror: frontCamera,
-                      timestamp: CMSampleBufferGetPresentationTimeStamp(buf))
-            recordedFrames += 1
-        }
+    }
+
+    private func captureFrame() {
+        guard let rec = recorder, let buf = frameSink.get(),
+              let pb = CMSampleBufferGetImageBuffer(buf) else { return }
+        let ok = rec.append(pb, landmarks: tracker.landmarks, cue: cue, metrics: metricsText,
+                            reps: "\(reps)/\(exercise.targetReps)", mirror: frontCamera,
+                            orientation: CameraOrientation.current(front: frontCamera),
+                            timestamp: CMSampleBufferGetPresentationTimeStamp(buf))
+        if ok { recordedFrames += 1 }
     }
 
     private func toggle() {
         running.toggle()
         if running {
+            saved = false
             engine = RepEngine(low: exercise.repLow, high: exercise.repHigh)
             reps = 0; recordedFrames = 0
             cue = "Calibrate: adopt neutral posture, then begin. Stop on: \(exercise.stopConditions.joined(separator: ", "))"
@@ -130,12 +172,7 @@ struct ExerciseSessionView: View {
             }
         } else {
             client.disconnect(); serverConnected = false
-            stopRecorder()
-            SessionStore.shared.save(exerciseId: exercise.id, reps: reps,
-                                     metrics: lastMetricsSnapshot(), cues: [:],
-                                     frames: tracker.landmarks.count,
-                                     source: serverConnected ? "gpu-server" : "on-device",
-                                     videoURL: videoURL, recordedFrames: recordedFrames)
+            persist()
         }
     }
 
@@ -150,18 +187,37 @@ struct ExerciseSessionView: View {
     }
 
     private func startRecorder() {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("recordings", isDirectory: true)
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let url = dir.appendingPathComponent("session_\(exercise.id)_\(Int(Date().timeIntervalSince1970)).mp4")
-        recorder = SessionRecorder(url: url, width: 720, height: 1280)
+        let landscape = CameraOrientation.interfaceOrientation().isLandscape
+        let url = SessionStore.recordingsDir()
+            .appendingPathComponent("session_\(exercise.id)_\(Int(Date().timeIntervalSince1970)).mp4")
+        let size = landscape ? (w: 1280, h: 720) : (w: 720, h: 1280)
+        recorder = SessionRecorder(url: url, width: size.w, height: size.h)
         videoURL = recorder == nil ? nil : url
     }
 
-    private func stopRecorder() {
-        recorder?.finish()
-        if recordedFrames == 0 { videoURL = nil }
+    /// Writes the MP4 header, then stores the session. Review opens this file.
+    private func persist() {
+        guard !saved else { return }
+        saved = true
+        let rec = recorder
+        let frames = recordedFrames
+        let url = videoURL
+        let repsNow = reps
+        let metrics = lastMetricsSnapshot()
+        let seen = tracker.landmarks.count
+        let source = serverConnected ? "gpu-server" : "on-device"
+        let exerciseId = exercise.id
         recorder = nil
+        let store: (URL?) -> Void = { video in
+            SessionStore.shared.save(exerciseId: exerciseId, reps: repsNow, metrics: metrics, cues: [:],
+                                     frames: max(seen, frames), source: source,
+                                     videoURL: video, recordedFrames: frames)
+        }
+        if let rec {
+            rec.finish { ok in store(ok ? url : nil) }
+        } else {
+            store(nil)
+        }
     }
 }
 
@@ -198,6 +254,9 @@ struct OverlayCanvas: View {
 struct CameraPreview: UIViewRepresentable {
     let tracker: PoseTracker
     let frontCamera: Bool
+    let zoom: Double
+    let lens: String
+    let onLenses: ([String]) -> Void
     let onFrame: (CMSampleBuffer) -> Void
 
     func makeUIView(context: Context) -> CameraHostView {
@@ -206,21 +265,27 @@ struct CameraPreview: UIViewRepresentable {
         view.previewLayer.videoGravity = .resizeAspectFill
         view.previewLayer.session = context.coordinator.session
         context.coordinator.host = view
+        view.onLayout = { [weak coord = context.coordinator] in coord?.applyConnection() }
         AVCaptureCamera.shared.requestPermission { granted in
-            if granted { context.coordinator.reconfigure(front: frontCamera) }
+            if granted { context.coordinator.reconfigure(front: frontCamera, lens: lens) }
         }
         return view
     }
 
     func updateUIView(_ uiView: CameraHostView, context: Context) {
         context.coordinator.host = uiView
-        context.coordinator.reconfigure(front: frontCamera)
+        context.coordinator.onLenses = onLenses
+        context.coordinator.reconfigure(front: frontCamera, lens: lens)
+        context.coordinator.setZoom(CGFloat(zoom))
     }
 
-    func makeCoordinator() -> Coordinator { Coordinator(tracker: tracker, onFrame: onFrame) }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(tracker: tracker, onFrame: onFrame, onLenses: onLenses)
+    }
 
     final class CameraHostView: UIView {
         let previewLayer = AVCaptureVideoPreviewLayer()
+        var onLayout: (() -> Void)?
         override init(frame: CGRect) {
             super.init(frame: frame)
             layer.addSublayer(previewLayer)
@@ -232,6 +297,7 @@ struct CameraPreview: UIViewRepresentable {
             CATransaction.setDisableActions(true)
             previewLayer.frame = bounds
             CATransaction.commit()
+            onLayout?()
         }
     }
 
@@ -239,30 +305,52 @@ struct CameraPreview: UIViewRepresentable {
         let session = AVCaptureSession()
         let tracker: PoseTracker
         let onFrame: (CMSampleBuffer) -> Void
+        var onLenses: ([String]) -> Void
         weak var host: CameraHostView?
         private let queue = DispatchQueue(label: "spinecare.camera")
         private var input: AVCaptureDeviceInput?
         private var appliedFront: Bool?
+        private var appliedLens: String?
         private var frameDelegate: FrameDelegate?
         private var started = false
 
-        init(tracker: PoseTracker, onFrame: @escaping (CMSampleBuffer) -> Void) {
+        init(tracker: PoseTracker, onFrame: @escaping (CMSampleBuffer) -> Void, onLenses: @escaping ([String]) -> Void) {
             self.tracker = tracker
             self.onFrame = onFrame
+            self.onLenses = onLenses
             session.sessionPreset = .hd1280x720
         }
 
-        func reconfigure(front: Bool) {
+        func reconfigure(front: Bool, lens: String) {
             guard AVCaptureCamera.shared.authorized else { return }
-            if appliedFront == front && started { return }
+            if appliedFront == front && appliedLens == lens && started { return }
             appliedFront = front
-            queue.async { [weak self] in self?.configure(front: front) }
+            appliedLens = lens
+            queue.async { [weak self] in self?.configure(front: front, lens: lens) }
         }
 
-        private func configure(front: Bool) {
+        private var appliedZoom: CGFloat = -1
+
+        func setZoom(_ factor: CGFloat) {
+            queue.async { [weak self] in
+                guard let self, let device = self.input?.device else { return }
+                if abs(self.appliedZoom - factor) <= 0.04 { return }
+                do {
+                    try device.lockForConfiguration()
+                    let maxZ = min(device.activeFormat.videoMaxZoomFactor, 5)
+                    let minZ = max(device.minAvailableVideoZoomFactor, 1)
+                    device.videoZoomFactor = min(max(factor, minZ), maxZ)
+                    device.unlockForConfiguration()
+                    self.appliedZoom = device.videoZoomFactor
+                } catch {}
+            }
+        }
+
+        private func configure(front: Bool, lens: String) {
             let position: AVCaptureDevice.Position = front ? .front : .back
-            guard let cam = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
-                    ?? AVCaptureDevice.default(for: .video) else { return }
+            let choices = Self.lenses(position)
+            DispatchQueue.main.async { self.onLenses(choices) }
+            guard let cam = Self.device(lens, position: position) else { return }
             session.beginConfiguration()
             if let old = input { session.removeInput(old) }
             guard let newInput = try? AVCaptureDeviceInput(device: cam), session.canAddInput(newInput) else {
@@ -271,6 +359,7 @@ struct CameraPreview: UIViewRepresentable {
             }
             session.addInput(newInput)
             input = newInput
+            appliedZoom = -1
             if session.outputs.isEmpty {
                 let output = AVCaptureVideoDataOutput()
                 output.alwaysDiscardsLateVideoFrames = true
@@ -284,20 +373,83 @@ struct CameraPreview: UIViewRepresentable {
             session.commitConfiguration()
             if !session.isRunning { session.startRunning() }
             started = true
-            DispatchQueue.main.async { [weak self] in self?.applyConnection(front: front) }
+            DispatchQueue.main.async { [weak self] in self?.applyConnection() }
         }
 
-        private func applyConnection(front: Bool) {
+        func applyConnection() {
             guard let conn = host?.previewLayer.connection else { return }
+            let front = appliedFront ?? false
+            let angle = CameraOrientation.previewAngle()
             if #available(iOS 17.0, *) {
-                if conn.isVideoRotationAngleSupported(90) { conn.videoRotationAngle = 90 }
+                if conn.isVideoRotationAngleSupported(angle) { conn.videoRotationAngle = angle }
             } else if conn.isVideoOrientationSupported {
-                conn.videoOrientation = .portrait
+                conn.videoOrientation = CameraOrientation.captureOrientation()
             }
             if conn.isVideoMirroringSupported {
                 conn.automaticallyAdjustsVideoMirroring = false
                 conn.isVideoMirrored = front
             }
+            frameDelegate?.orientation = CameraOrientation.current(front: front)
+        }
+
+        private static func lenses(_ position: AVCaptureDevice.Position) -> [String] {
+            var out: [String] = []
+            if AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: position) != nil { out.append("ultra") }
+            if AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position) != nil { out.append("wide") }
+            if AVCaptureDevice.default(.builtInTelephotoCamera, for: .video, position: position) != nil { out.append("tele") }
+            return out.isEmpty ? ["wide"] : out
+        }
+
+        private static func device(_ lens: String, position: AVCaptureDevice.Position) -> AVCaptureDevice? {
+            let type: AVCaptureDevice.DeviceType
+            switch lens {
+            case "ultra": type = .builtInUltraWideCamera
+            case "tele": type = .builtInTelephotoCamera
+            default: type = .builtInWideAngleCamera
+            }
+            return AVCaptureDevice.default(type, for: .video, position: position)
+                ?? AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: position)
+                ?? AVCaptureDevice.default(for: .video)
+        }
+    }
+}
+
+enum CameraOrientation {
+    static func interfaceOrientation() -> UIInterfaceOrientation {
+        UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first?.interfaceOrientation ?? .portrait
+    }
+
+    static func previewAngle() -> CGFloat {
+        switch interfaceOrientation() {
+        case .landscapeLeft: return 180
+        case .landscapeRight: return 0
+        case .portraitUpsideDown: return 270
+        default: return 90
+        }
+    }
+
+    static func captureOrientation() -> AVCaptureVideoOrientation {
+        switch interfaceOrientation() {
+        case .landscapeLeft: return .landscapeLeft
+        case .landscapeRight: return .landscapeRight
+        case .portraitUpsideDown: return .portraitUpsideDown
+        default: return .portrait
+        }
+    }
+
+    /// Buffer orientation for Vision and the saved movie. Front camera is mirrored.
+    static func current(front: Bool) -> CGImagePropertyOrientation {
+        switch interfaceOrientation() {
+        case .landscapeLeft:
+            return front ? .upMirrored : .down
+        case .landscapeRight:
+            return front ? .downMirrored : .up
+        case .portraitUpsideDown:
+            return front ? .rightMirrored : .left
+        default:
+            return front ? .leftMirrored : .right
         }
     }
 }
@@ -323,6 +475,12 @@ final class FrameDelegate: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
     private let tracker: PoseTracker
     private let minInterval: TimeInterval
     private let onFrame: (CMSampleBuffer) -> Void
+    private let lock = NSLock()
+    private var storedOrientation: CGImagePropertyOrientation = .right
+    var orientation: CGImagePropertyOrientation {
+        get { lock.lock(); defer { lock.unlock() }; return storedOrientation }
+        set { lock.lock(); storedOrientation = newValue; lock.unlock() }
+    }
     private var lastT = Date.distantPast
     init(tracker: PoseTracker, minInterval: TimeInterval, onFrame: @escaping (CMSampleBuffer) -> Void) {
         self.tracker = tracker; self.minInterval = minInterval; self.onFrame = onFrame
@@ -334,6 +492,6 @@ final class FrameDelegate: NSObject, AVCaptureVideoDataOutputSampleBufferDelegat
               CMSampleBufferGetImageBuffer(buf) != nil else { return }
         lastT = now
         onFrame(buf)
-        tracker.process(buf)
+        tracker.process(buf, orientation: orientation)
     }
 }
