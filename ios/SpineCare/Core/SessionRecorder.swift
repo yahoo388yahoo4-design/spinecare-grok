@@ -41,7 +41,7 @@ final class SessionRecorder {
     }
 
     func append(_ pixelBuffer: CVPixelBuffer, landmarks: [String: Metrics.LM],
-                cue: String, metrics: String, reps: String, mirror _: Bool,
+                cue: String, metrics: String, reps: String, mirror: Bool,
                 orientation: CGImagePropertyOrientation, timestamp _: CMTime) -> Bool {
         guard input.isReadyForMoreMediaData else { return false }
         let time = CMTime(value: frameIndex, timescale: 30)
@@ -52,6 +52,9 @@ final class SessionRecorder {
         frameIndex += 1
 
         var ci = CIImage(cvPixelBuffer: pixelBuffer).oriented(forExifOrientation: Int32(orientation.rawValue))
+        if mirror {
+            ci = ci.transformed(by: CGAffineTransform(scaleX: -1, y: 1))
+        }
         ci = ci.transformed(by: CGAffineTransform(translationX: -ci.extent.origin.x, y: -ci.extent.origin.y))
         let sx = CGFloat(width) / max(ci.extent.width, 1)
         let sy = CGFloat(height) / max(ci.extent.height, 1)
@@ -62,7 +65,7 @@ final class SessionRecorder {
         let renderer = UIGraphicsImageRenderer(size: CGSize(width: width, height: height), format: format)
         let overlayImage = renderer.image { r in
             OverlayRenderer.draw(cg: r.cgContext, size: CGSize(width: width, height: height),
-                                 lms: landmarks, cue: cue, metrics: metrics, reps: reps, mirror: false)
+                                 lms: landmarks, cue: cue, metrics: metrics, reps: reps, mirror: mirror)
         }
         guard let overlayCG = overlayImage.cgImage else { return false }
         let composed = CIImage(cgImage: overlayCG).composited(over: ci)
